@@ -1,4 +1,4 @@
-import json
+import jsonimport json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -1270,4 +1270,3 @@ st.caption(
 st.caption(
     "※ 그래프와 리포트는 미래 흥행 결과를 예측하지 않습니다."
 )
-
