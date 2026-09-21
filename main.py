@@ -1,4 +1,4 @@
-import jsonimport json
+import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -7,9 +7,10 @@ import requests
 import streamlit as st
 
 
-# =========================================================
-# 1. Streamlit 기본 설정
-# =========================================================
+# ============================================================
+# 🎬 영화 흥행 탐정
+# KOBIS API 하나만 사용하는 Streamlit 앱
+# ============================================================
 
 st.set_page_config(
     page_title="영화 흥행 탐정",
@@ -18,91 +19,96 @@ st.set_page_config(
 )
 
 
-# =========================================================
-# 2. KOBIS API 주소
-# =========================================================
+# ============================================================
+# 1. KOBIS API 주소
+# ============================================================
 
-KOBIS_API_URL = (
+KOBIS_URL = (
     "https://www.kobis.or.kr/"
     "kobisopenapi/webservice/rest/boxoffice/"
     "searchDailyBoxOfficeList.json"
 )
 
 
-# =========================================================
-# 3. 한국 시간 기준 날짜 함수
-# =========================================================
+# ============================================================
+# 2. 한국 시간 기준 날짜
+# ============================================================
 
-def get_kst_today():
-    """한국 시간 기준 오늘 날짜를 반환합니다."""
+def get_korea_today():
+    """한국 시간 기준 오늘 날짜를 가져옵니다."""
 
-    now = datetime.now(
+    return datetime.now(
         ZoneInfo("Asia/Seoul")
-    )
-
-    return now.date()
+    ).date()
 
 
 def get_yesterday():
-    """한국 시간 기준 어제 날짜를 반환합니다."""
+    """한국 시간 기준 어제 날짜를 가져옵니다."""
 
-    return get_kst_today() - timedelta(days=1)
+    return get_korea_today() - timedelta(days=1)
 
 
-def date_to_api_format(date_value):
-    """
-    날짜 객체를 KOBIS API가 사용하는
-    YYYYMMDD 문자열로 바꿉니다.
-    """
+def to_kobis_date(date_value):
+    """날짜를 KOBIS용 YYYYMMDD 형태로 변환합니다."""
 
     return date_value.strftime("%Y%m%d")
 
 
-def format_date_korean(date_value):
-    """날짜를 화면에 보기 좋은 형태로 표시합니다."""
+def pretty_date(date_value):
+    """날짜를 보기 좋은 한국어 형태로 표시합니다."""
 
     return date_value.strftime(
         "%Y년 %m월 %d일"
     )
 
 
-# =========================================================
-# 4. KOBIS API에서 하루 데이터 가져오기
-# =========================================================
+# ============================================================
+# 3. 숫자 변환
+# ============================================================
 
-@st.cache_data(ttl=60 * 30)
-def get_daily_boxoffice(target_date):
-    """
-    특정 날짜의 KOBIS 일일 박스오피스를 가져옵니다.
-
-    target_date:
-        YYYYMMDD 형식 문자열
-
-    반환:
-        영화 목록, 오류 메시지
-    """
-
-    # -----------------------------------------------------
-    # Secrets에서 KOBIS API 키 가져오기
-    # -----------------------------------------------------
+def safe_int(value):
+    """KOBIS의 문자열 숫자를 정수로 변환합니다."""
 
     try:
+        return int(value)
 
+    except (ValueError, TypeError):
+        return 0
+
+
+def comma(value):
+    """숫자에 천 단위 쉼표를 표시합니다."""
+
+    return f"{int(value):,}"
+
+
+# ============================================================
+# 4. KOBIS에서 하루 박스오피스 가져오기
+# ============================================================
+
+@st.cache_data(ttl=1800)
+def get_boxoffice(target_date):
+    """
+    KOBIS 일일 박스오피스 API를 호출합니다.
+
+    target_date는 YYYYMMDD 형태입니다.
+    """
+
+    # --------------------------------------------------------
+    # Streamlit Secrets에서 인증키를 가져옵니다.
+    # 실제 키를 코드에 작성하지 않습니다.
+    # --------------------------------------------------------
+
+    try:
         api_key = st.secrets["KOBIS_KEY"]
 
     except (KeyError, FileNotFoundError):
 
         return None, (
-            "KOBIS_KEY를 찾을 수 없습니다.\n\n"
-            "Streamlit Cloud의 "
-            "Settings → Secrets에 "
-            "KOBIS_KEY가 등록되어 있는지 확인해 주세요."
+            "KOBIS_KEY를 찾을 수 없습니다."
         )
 
-    # -----------------------------------------------------
-    # API 요청
-    # -----------------------------------------------------
-
+    # API에 전달할 값입니다.
     params = {
         "key": api_key,
         "targetDt": target_date,
@@ -111,9 +117,9 @@ def get_daily_boxoffice(target_date):
     try:
 
         response = requests.get(
-            KOBIS_API_URL,
+            KOBIS_URL,
             params=params,
-            timeout=10,
+            timeout=15,
         )
 
         response.raise_for_status()
@@ -123,72 +129,57 @@ def get_daily_boxoffice(target_date):
     except requests.exceptions.Timeout:
 
         return None, (
-            "KOBIS API 요청 시간이 초과되었습니다.\n\n"
-            "잠시 후 다시 시도해 주세요."
+            "KOBIS API 요청 시간이 초과되었습니다."
         )
 
     except requests.exceptions.RequestException as error:
 
         return None, (
-            "KOBIS API에 연결하지 못했습니다.\n\n"
-            f"상세 오류: {error}\n\n"
-            "인터넷 연결이나 KOBIS API 상태를 확인해 주세요."
+            f"KOBIS API 연결에 실패했습니다.\n\n"
+            f"상세 오류: {error}"
         )
 
     except json.JSONDecodeError:
 
         return None, (
-            "KOBIS API가 올바른 JSON 응답을 보내지 않았습니다.\n\n"
-            "KOBIS API 상태를 확인해 주세요."
+            "KOBIS에서 올바른 JSON 데이터를 "
+            "받지 못했습니다."
         )
 
-    # -----------------------------------------------------
-    # KOBIS는 인증키가 잘못되어도 HTTP 200을 반환할 수 있습니다.
-    #
-    # 따라서 HTTP 상태 코드만 확인하면 안 되고
-    # faultInfo가 있는지도 확인해야 합니다.
-    # -----------------------------------------------------
+    # --------------------------------------------------------
+    # KOBIS는 인증키가 틀려도 HTTP 200을 반환할 수 있습니다.
+    # 따라서 faultInfo를 반드시 확인합니다.
+    # --------------------------------------------------------
 
     if "faultInfo" in data:
 
-        fault_info = data.get(
-            "faultInfo",
-            {},
-        )
+        fault = data["faultInfo"]
 
-        error_code = (
-            fault_info.get("resultCode")
-            or fault_info.get("faultCode")
+        code = (
+            fault.get("resultCode")
+            or fault.get("faultCode")
             or "알 수 없음"
         )
 
-        error_message = (
-            fault_info.get("resultMsg")
-            or fault_info.get("faultString")
-            or "KOBIS API 오류"
+        message = (
+            fault.get("resultMsg")
+            or fault.get("faultString")
+            or "알 수 없는 오류"
         )
 
         return None, (
-            "KOBIS API에서 오류를 반환했습니다.\n\n"
-            f"오류 코드: {error_code}\n"
-            f"오류 내용: {error_message}\n\n"
-            "KOBIS_KEY가 정확한지 확인해 주세요."
+            f"KOBIS API 오류입니다.\n\n"
+            f"오류 코드: {code}\n"
+            f"오류 내용: {message}"
         )
 
-    # -----------------------------------------------------
-    # 정상 응답 처리
-    # -----------------------------------------------------
-
-    result = data.get(
-        "boxOfficeResult"
-    )
+    # 정상적인 박스오피스 결과를 가져옵니다.
+    result = data.get("boxOfficeResult")
 
     if not result:
 
         return None, (
-            "KOBIS 응답에 boxOfficeResult가 없습니다.\n\n"
-            "KOBIS API의 응답 형식 또는 "
-            "서비스 상태를 확인해 주세요."
+            "KOBIS 응답에 boxOfficeResult가 없습니다."
         )
 
     movies = result.get(
@@ -199,426 +190,556 @@ def get_daily_boxoffice(target_date):
     if not movies:
 
         return None, (
-            "해당 날짜의 박스오피스 영화 목록이 없습니다.\n\n"
-            "KOBIS 데이터가 정상적으로 집계되었는지 "
-            "확인해 주세요."
+            "해당 날짜의 영화 목록이 비어 있습니다."
         )
 
     return movies, None
 
 
-# =========================================================
-# 5. 최근 여러 날짜의 데이터 가져오기
-# =========================================================
+# ============================================================
+# 5. 특정 영화의 최근 기록 가져오기
+# ============================================================
 
-@st.cache_data(ttl=60 * 30)
+@st.cache_data(ttl=1800)
 def get_movie_history(
     movie_name,
-    end_date,
+    end_date_string,
     days=14,
 ):
     """
-    선택한 영화의 최근 N일간 KOBIS 데이터를 수집합니다.
+    선택한 영화의 최근 데이터를 가져옵니다.
 
-    KOBIS 일일 박스오피스 API를 날짜별로 조회합니다.
+    KOBIS 일일 박스오피스를 날짜별로 조회합니다.
     """
 
-    history = []
-    errors = []
+    end_date = datetime.strptime(
+        end_date_string,
+        "%Y-%m-%d",
+    ).date()
 
-    # 오늘이 아니라 'end_date'부터 과거로 이동합니다.
-    for offset in range(days):
+    records = []
+    failed_dates = []
+
+    # 최근 14일을 하나씩 확인합니다.
+    for i in range(days):
 
         target_date = (
-            end_date
-            - timedelta(days=offset)
+            end_date - timedelta(days=i)
         )
 
-        target_date_string = (
-            date_to_api_format(
-                target_date
-            )
+        target = to_kobis_date(
+            target_date
         )
 
-        movies, error = get_daily_boxoffice(
-            target_date_string
+        movies, error = get_boxoffice(
+            target
         )
 
-        # 해당 날짜 API 오류
+        # API 요청 자체가 실패한 경우
         if error:
 
-            errors.append(
-                {
-                    "date": target_date,
-                    "error": error,
-                }
+            failed_dates.append(
+                target_date
             )
 
             continue
 
-        # 해당 날짜에서 선택한 영화를 찾습니다.
-        found_movie = None
+        found = None
 
+        # 해당 날짜의 영화 목록에서
+        # 사용자가 선택한 영화를 찾습니다.
         for movie in movies:
 
             if movie.get("movieNm") == movie_name:
 
-                found_movie = movie
+                found = movie
                 break
 
-        # 영화가 해당 날짜 박스오피스에 없을 수 있습니다.
-        if found_movie is None:
-
+        # 그날 박스오피스에 없으면 건너뜁니다.
+        if found is None:
             continue
 
-        # KOBIS에서 받은 데이터를 저장합니다.
-        history.append(
+        records.append(
             {
-                "date": target_date,
-                "rank": int(
-                    found_movie.get(
-                        "rank",
-                        0,
-                    )
-                    or 0
+                "날짜": target_date,
+                "순위": safe_int(
+                    found.get("rank")
                 ),
-                "movieNm": found_movie.get(
+                "영화명": found.get(
                     "movieNm",
                     movie_name,
                 ),
-                "openDt": found_movie.get(
+                "개봉일": found.get(
                     "openDt",
                     "",
                 ),
-                "audiCnt": int(
-                    found_movie.get(
-                        "audiCnt",
-                        0,
-                    )
-                    or 0
+                "관객수": safe_int(
+                    found.get("audiCnt")
                 ),
-                "audiAcc": int(
-                    found_movie.get(
-                        "audiAcc",
-                        0,
-                    )
-                    or 0
+                "누적관객": safe_int(
+                    found.get("audiAcc")
                 ),
-                "scrnCnt": int(
-                    found_movie.get(
-                        "scrnCnt",
-                        0,
-                    )
-                    or 0
+                "스크린수": safe_int(
+                    found.get("scrnCnt")
                 ),
-                "showCnt": int(
-                    found_movie.get(
-                        "showCnt",
-                        0,
-                    )
-                    or 0
+                "상영횟수": safe_int(
+                    found.get("showCnt")
                 ),
             }
         )
 
-    # 날짜순으로 정렬합니다.
-    history.sort(
-        key=lambda item: item["date"]
+    # 날짜가 오래된 것부터 최신 순서가 되도록 정렬합니다.
+    records.sort(
+        key=lambda x: x["날짜"]
     )
 
-    return history, errors
+    return records, failed_dates
 
 
-# =========================================================
-# 6. 숫자 포맷 함수
-# =========================================================
+# ============================================================
+# 6. 변화율 계산
+# ============================================================
 
-def format_number(value):
-    """숫자를 천 단위 쉼표로 표시합니다."""
+def change_rate(first, last):
+    """처음 값과 마지막 값의 변화율을 계산합니다."""
 
-    return f"{int(value):,}"
-
-
-# =========================================================
-# 7. 변화량 계산
-# =========================================================
-
-def calculate_change(history, column):
-    """
-    첫 번째 데이터와 마지막 데이터를 비교합니다.
-
-    반환:
-        처음 값
-        마지막 값
-        변화량
-        변화율
-    """
-
-    if len(history) < 2:
-
+    if first == 0:
         return None
 
-    first_value = history[0][column]
-    last_value = history[-1][column]
-
-    change = (
-        last_value - first_value
-    )
-
-    if first_value != 0:
-
-        change_rate = (
-            change
-            / first_value
-            * 100
-        )
-
-    else:
-
-        change_rate = None
-
     return (
-        first_value,
-        last_value,
-        change,
-        change_rate,
+        (last - first)
+        / first
+        * 100
     )
 
 
-# =========================================================
-# 8. 순위 변화 계산
-# =========================================================
+# ============================================================
+# 7. 관객수 해설
+# ============================================================
 
-def calculate_rank_change(history):
-    """
-    순위는 숫자가 작을수록 좋습니다.
-
-    예:
-        10위 → 3위
-        실제로는 7계단 상승
-    """
-
-    if len(history) < 2:
-
-        return None
-
-    first_rank = history[0]["rank"]
-    last_rank = history[-1]["rank"]
-
-    # 숫자가 감소하면 순위가 상승한 것입니다.
-    improvement = (
-        first_rank - last_rank
-    )
-
-    return (
-        first_rank,
-        last_rank,
-        improvement,
-    )
-
-
-# =========================================================
-# 9. 흥행 탐정 리포트 생성
-# =========================================================
-
-def make_detective_report(history):
-    """
-    실제 KOBIS 데이터의 변화만 가지고
-    간단한 흥행 흐름 설명을 만듭니다.
-
-    미래 흥행을 예측하지 않습니다.
-    """
+def audience_story(history):
 
     if len(history) < 2:
 
         return (
-            "아직 비교할 수 있는 날짜가 충분하지 않습니다. "
-            "KOBIS에서 이 영화의 데이터가 쌓인 뒤 "
-            "다시 확인해 주세요."
+            "👥 아직 비교할 날짜가 충분하지 않아요. "
+            "조금 더 데이터가 쌓이면 관객 흐름을 볼 수 있습니다."
         )
 
-    reports = []
+    first = history[0]["관객수"]
+    last = history[-1]["관객수"]
 
-    # -----------------------------------------------------
-    # 관객수 변화
-    # -----------------------------------------------------
-
-    audience = calculate_change(
-        history,
-        "audiCnt",
+    rate = change_rate(
+        first,
+        last,
     )
 
-    if audience:
+    if rate is None:
 
-        first_value = audience[0]
-        last_value = audience[1]
-        change_rate = audience[3]
+        return (
+            "👥 관객수 변화를 계산하기 어렵습니다."
+        )
 
-        if change_rate is not None:
+    if rate >= 50:
 
-            if change_rate > 20:
+        return (
+            f"🔥 관객수가 {rate:.1f}% 증가했어요! "
+            "최근 비교 기간에 관객 유입이 크게 늘어난 모습입니다."
+        )
 
-                reports.append(
-                    f"최근 비교 기간의 일일 관객수가 "
-                    f"{change_rate:.1f}% 증가했습니다."
-                )
+    if rate >= 20:
 
-            elif change_rate < -20:
+        return (
+            f"📈 관객수가 {rate:.1f}% 증가했어요. "
+            "최근 관객 흐름이 꽤 활발해졌습니다."
+        )
 
-                reports.append(
-                    f"최근 비교 기간의 일일 관객수가 "
-                    f"{abs(change_rate):.1f}% 감소했습니다."
-                )
+    if rate >= 5:
 
-            else:
+        return (
+            f"🙂 관객수가 {rate:.1f}% 늘었어요. "
+            "큰 폭은 아니지만 증가하는 흐름입니다."
+        )
 
-                reports.append(
-                    "최근 비교 기간의 일일 관객수는 "
-                    "큰 폭의 변화가 나타나지 않았습니다."
-                )
+    if rate > -5:
 
-    # -----------------------------------------------------
-    # 스크린수 변화
-    # -----------------------------------------------------
+        return (
+            "😐 관객수가 큰 폭으로 움직이지 않았어요. "
+            "최근 관객 흐름이 비교적 안정적입니다."
+        )
 
-    screen = calculate_change(
-        history,
-        "scrnCnt",
+    if rate > -20:
+
+        return (
+            f"📉 관객수가 {abs(rate):.1f}% 감소했어요. "
+            "최근 관객 유입이 조금씩 줄어드는 모습입니다."
+        )
+
+    if rate > -50:
+
+        return (
+            f"🍂 관객수가 {abs(rate):.1f}% 감소했어요. "
+            "초반에 비해 관객 흐름이 약해진 모습입니다."
+        )
+
+    return (
+        f"🌙 관객수가 {abs(rate):.1f}% 감소했어요. "
+        "최근 관객 유입이 크게 줄어든 상태입니다."
     )
 
-    if screen:
 
-        screen_change = screen[2]
+# ============================================================
+# 8. 순위 해설
+# ============================================================
 
-        if screen_change > 0:
+def rank_story(history):
 
-            reports.append(
-                f"스크린수는 "
-                f"{format_number(screen_change)}개 증가했습니다."
-            )
+    if len(history) < 2:
 
-        elif screen_change < 0:
+        return (
+            "🏆 아직 비교할 순위 데이터가 충분하지 않습니다."
+        )
 
-            reports.append(
-                f"스크린수는 "
-                f"{format_number(abs(screen_change))}개 감소했습니다."
-            )
+    first = history[0]["순위"]
+    last = history[-1]["순위"]
 
-        else:
+    # 숫자가 작아질수록 순위가 올라간 것입니다.
+    difference = first - last
 
-            reports.append(
-                "스크린수에는 변화가 없었습니다."
-            )
+    if difference >= 5:
 
-    # -----------------------------------------------------
-    # 순위 변화
-    # -----------------------------------------------------
+        return (
+            f"🚀 순위가 {difference}계단 상승했어요! "
+            "박스오피스에서 존재감이 커진 흐름입니다."
+        )
 
-    rank_change = calculate_rank_change(
-        history
+    if difference > 0:
+
+        return (
+            f"📈 순위가 {difference}계단 상승했어요. "
+            "조금씩 상위권으로 올라온 모습입니다."
+        )
+
+    if difference <= -5:
+
+        return (
+            f"📉 순위가 {abs(difference)}계단 하락했어요. "
+            "최근 박스오피스 순위가 꽤 움직였습니다."
+        )
+
+    if difference < 0:
+
+        return (
+            f"📉 순위가 {abs(difference)}계단 하락했어요."
+        )
+
+    return (
+        "🧘 순위가 그대로예요. "
+        "최근 비교 기간 동안 큰 순위 변화가 없었습니다."
     )
 
-    if rank_change:
 
-        improvement = rank_change[2]
+# ============================================================
+# 9. 스크린수 해설
+# ============================================================
 
-        if improvement > 0:
+def screen_story(history):
 
-            reports.append(
-                f"박스오피스 순위는 "
-                f"{improvement}계단 상승했습니다."
-            )
+    if len(history) < 2:
 
-        elif improvement < 0:
+        return (
+            "🎞️ 스크린수 변화를 비교할 데이터가 부족합니다."
+        )
 
-            reports.append(
-                f"박스오피스 순위는 "
-                f"{abs(improvement)}계단 하락했습니다."
-            )
+    first = history[0]["스크린수"]
+    last = history[-1]["스크린수"]
 
-        else:
+    difference = last - first
 
-            reports.append(
-                "박스오피스 순위에는 변화가 없었습니다."
-            )
+    if difference >= 100:
 
-    return " ".join(reports)
+        return (
+            f"🎞️ 스크린이 {difference:,}개 늘었어요! "
+            "극장 편성이 크게 확대된 구간입니다."
+        )
+
+    if difference > 0:
+
+        return (
+            f"🎞️ 스크린이 {difference:,}개 늘었어요. "
+            "상영관 배정이 확대된 모습입니다."
+        )
+
+    if difference <= -100:
+
+        return (
+            f"🎞️ 스크린이 {abs(difference):,}개 줄었어요. "
+            "극장 편성이 상당히 축소된 흐름입니다."
+        )
+
+    if difference < 0:
+
+        return (
+            f"🎞️ 스크린이 {abs(difference):,}개 줄었어요. "
+            "상영관 배정이 조금 감소했습니다."
+        )
+
+    return (
+        "🎞️ 스크린수가 거의 그대로예요. "
+        "극장 편성이 비교적 안정적으로 유지되고 있습니다."
+    )
 
 
-# =========================================================
-# 10. 페이지 제목
-# =========================================================
+# ============================================================
+# 10. 상영횟수 해설
+# ============================================================
+
+def show_story(history):
+
+    if len(history) < 2:
+
+        return (
+            "📽️ 상영횟수를 비교할 데이터가 부족합니다."
+        )
+
+    first = history[0]["상영횟수"]
+    last = history[-1]["상영횟수"]
+
+    difference = last - first
+
+    if difference > 100:
+
+        return (
+            f"📽️ 하루 상영횟수가 {difference:,}회 늘었어요! "
+            "극장에서 이 영화를 만날 수 있는 편성이 크게 늘었습니다."
+        )
+
+    if difference > 0:
+
+        return (
+            f"📽️ 상영횟수가 {difference:,}회 증가했어요. "
+            "상영 편성이 조금 확대됐습니다."
+        )
+
+    if difference < -100:
+
+        return (
+            f"📽️ 상영횟수가 {abs(difference):,}회 줄었어요. "
+            "상영 편성이 눈에 띄게 감소했습니다."
+        )
+
+    if difference < 0:
+
+        return (
+            f"📽️ 상영횟수가 {abs(difference):,}회 감소했어요."
+        )
+
+    return (
+        "📽️ 상영횟수는 큰 변화가 없습니다."
+    )
+
+
+# ============================================================
+# 11. 스크린당 관객수 해설
+# ============================================================
+
+def efficiency_story(history):
+
+    if not history:
+        return ""
+
+    latest = history[-1]
+
+    audience = latest["관객수"]
+    screens = latest["스크린수"]
+
+    if screens == 0:
+
+        return (
+            "🎯 스크린수가 0이라 스크린당 관객수를 "
+            "계산할 수 없습니다."
+        )
+
+    per_screen = audience / screens
+
+    return (
+        f"🎯 어제 기준 스크린 1개당 약 "
+        f"{per_screen:.0f}명의 관객이 집계됐어요. "
+        "관객수와 스크린수를 함께 보면 "
+        "영화의 현재 흐름을 조금 더 입체적으로 볼 수 있습니다."
+    )
+
+
+# ============================================================
+# 12. 탐정의 종합 분석
+# ============================================================
+
+def detective_summary(history):
+
+    if len(history) < 2:
+
+        return (
+            "🕵️ 아직 사건 파일이 얇습니다. "
+            "조금 더 날짜가 쌓이면 변화가 더 잘 보일 거예요."
+        )
+
+    first = history[0]
+    last = history[-1]
+
+    audience_rate = change_rate(
+        first["관객수"],
+        last["관객수"],
+    )
+
+    screen_difference = (
+        last["스크린수"]
+        - first["스크린수"]
+    )
+
+    rank_difference = (
+        first["순위"]
+        - last["순위"]
+    )
+
+    # 관객 증가 + 스크린 증가
+    if (
+        audience_rate is not None
+        and audience_rate > 10
+        and screen_difference > 0
+    ):
+
+        return (
+            "🕵️ **탐정의 한마디:** "
+            "관객과 스크린이 함께 올라가는 흐름이 포착됐습니다. "
+            "최근 비교 기간에는 극장 편성과 관객 흐름이 "
+            "같은 방향으로 움직였습니다."
+        )
+
+    # 관객 증가 + 스크린 감소
+    if (
+        audience_rate is not None
+        and audience_rate > 10
+        and screen_difference < 0
+    ):
+
+        return (
+            "🕵️ **탐정의 한마디:** "
+            "스크린은 줄었는데 관객수는 늘었습니다. "
+            "최근 데이터에서는 상영관 규모보다 "
+            "관객수 변화가 더 눈에 띕니다."
+        )
+
+    # 관객 감소 + 스크린 증가
+    if (
+        audience_rate is not None
+        and audience_rate < -10
+        and screen_difference > 0
+    ):
+
+        return (
+            "🕵️ **탐정의 한마디:** "
+            "스크린은 늘었지만 관객수는 감소했습니다. "
+            "상영관 확대와 관객 유입이 같은 방향으로 "
+            "움직이지 않은 구간입니다."
+        )
+
+    # 순위 상승
+    if rank_difference >= 3:
+
+        return (
+            "🕵️ **탐정의 한마디:** "
+            f"박스오피스 순위가 {rank_difference}계단 올라왔습니다. "
+            "최근 비교 기간의 순위 변화가 눈에 띕니다."
+        )
+
+    # 순위 하락
+    if rank_difference <= -3:
+
+        return (
+            "🕵️ **탐정의 한마디:** "
+            f"박스오피스 순위가 {abs(rank_difference)}계단 내려왔습니다. "
+            "최근 순위 흐름에 변화가 나타났습니다."
+        )
+
+    return (
+        "🕵️ **탐정의 한마디:** "
+        "최근 데이터에서는 관객수·스크린수·순위를 "
+        "함께 살펴보는 것이 좋겠습니다."
+    )
+
+
+# ============================================================
+# 13. 앱 제목
+# ============================================================
 
 st.title("🕵️ 영화 흥행 탐정")
 
 st.write(
-    "KOBIS의 실제 박스오피스 데이터를 이용해 "
-    "영화의 최근 흥행 흐름을 살펴봅니다."
+    "영화 한 편을 선택하면 KOBIS 데이터를 추적해서 "
+    "최근 흥행 흐름을 재미있게 분석해드립니다."
 )
 
 st.caption(
-    "※ 미래 흥행을 예측하지 않고 "
-    "KOBIS에서 확인되는 실제 데이터의 변화만 분석합니다."
+    "KOBIS 일일 박스오피스 데이터를 기반으로 합니다. "
+    "미래 흥행을 예측하지 않고 실제 관측 데이터를 설명합니다."
 )
 
 
-# =========================================================
-# 11. 조회 기준 날짜
-# =========================================================
+# ============================================================
+# 14. 한국 시간 기준 어제
+# ============================================================
 
 yesterday = get_yesterday()
 
 st.info(
-    "현재는 한국 시간 기준 "
-    f"{format_date_korean(yesterday)}의 "
-    "박스오피스를 기본으로 조회합니다."
+    f"📅 조사 기준일: **{pretty_date(yesterday)}** "
+    "(한국 시간 기준)"
 )
 
 
-# =========================================================
-# 12. 어제 박스오피스 가져오기
-# =========================================================
+# ============================================================
+# 15. 어제 박스오피스 조회
+# ============================================================
 
 with st.spinner(
-    "KOBIS에서 박스오피스를 가져오는 중입니다..."
+    "🕵️ 어제의 박스오피스 사건 파일을 여는 중..."
 ):
 
-    yesterday_movies, error = (
-        get_daily_boxoffice(
-            date_to_api_format(
-                yesterday
-            )
-        )
+    movies, error = get_boxoffice(
+        to_kobis_date(yesterday)
     )
 
 
+# API 오류
 if error:
 
     st.error(
-        "KOBIS 데이터를 가져오지 못했습니다."
+        "🚨 KOBIS 데이터를 가져오지 못했습니다."
     )
 
     st.warning(error)
 
     st.info(
-        "확인할 내용:\n\n"
-        "1. Streamlit Cloud → Settings → Secrets에서 "
-        "KOBIS_KEY가 등록되어 있는지 확인\n"
-        "2. KOBIS 인증키가 정확한지 확인\n"
-        "3. KOBIS Open API 상태 확인\n"
-        "4. 잠시 후 새로고침"
+        """
+### 🔧 먼저 확인해 주세요
+
+- Streamlit Cloud → **Settings → Secrets**에 `KOBIS_KEY`가 있는지 확인
+- KOBIS 인증키에 오타가 없는지 확인
+- KOBIS Open API가 정상적으로 작동하는지 확인
+- 잠시 후 페이지를 새로고침
+        """
     )
 
     st.stop()
 
 
-# =========================================================
-# 13. 영화 목록 만들기
-# =========================================================
+# ============================================================
+# 16. 영화 목록 만들기
+# ============================================================
 
 movie_names = [
     movie.get("movieNm")
-    for movie in yesterday_movies
+    for movie in movies
     if movie.get("movieNm")
 ]
 
@@ -626,104 +747,87 @@ movie_names = [
 if not movie_names:
 
     st.warning(
-        "어제의 영화 목록이 비어 있습니다."
+        "🎬 조사할 영화 목록이 없습니다."
     )
 
     st.info(
-        "KOBIS의 어제 박스오피스 데이터가 "
-        "정상적으로 집계되었는지 확인해 주세요."
+        "한국 시간 기준 어제의 KOBIS 박스오피스 "
+        "데이터가 정상적으로 집계되었는지 확인해 주세요."
     )
 
     st.stop()
 
 
-# =========================================================
-# 14. 영화 선택
-# =========================================================
+# ============================================================
+# 17. 영화 선택
+# ============================================================
 
 st.subheader(
-    "🔎 조사할 영화를 선택하세요."
+    "🔎 사건 파일을 선택하세요"
 )
 
 selected_movie = st.selectbox(
-    "영화",
-    options=movie_names,
+    "분석할 영화",
+    movie_names,
 )
 
 
-# =========================================================
-# 15. 선택 영화의 최신 데이터 찾기
-# =========================================================
+# ============================================================
+# 18. 선택한 영화의 최신 데이터 찾기
+# ============================================================
 
-selected_latest = None
+latest = None
 
-for movie in yesterday_movies:
+for movie in movies:
 
     if movie.get("movieNm") == selected_movie:
 
-        selected_latest = movie
+        latest = movie
         break
 
 
-if selected_latest is None:
+if latest is None:
 
     st.warning(
-        "선택한 영화의 상세 데이터를 찾을 수 없습니다."
+        "선택한 영화의 데이터를 찾을 수 없습니다."
     )
 
     st.stop()
 
 
-# 숫자 변환
-latest_rank = int(
-    selected_latest.get(
-        "rank",
-        0,
-    )
-    or 0
+# ============================================================
+# 19. 최신 데이터 숫자로 변환
+# ============================================================
+
+current_rank = safe_int(
+    latest.get("rank")
 )
 
-latest_audience = int(
-    selected_latest.get(
-        "audiCnt",
-        0,
-    )
-    or 0
+current_audience = safe_int(
+    latest.get("audiCnt")
 )
 
-latest_acc = int(
-    selected_latest.get(
-        "audiAcc",
-        0,
-    )
-    or 0
+current_acc = safe_int(
+    latest.get("audiAcc")
 )
 
-latest_screen = int(
-    selected_latest.get(
-        "scrnCnt",
-        0,
-    )
-    or 0
+current_screens = safe_int(
+    latest.get("scrnCnt")
 )
 
-latest_show = int(
-    selected_latest.get(
-        "showCnt",
-        0,
-    )
-    or 0
+current_shows = safe_int(
+    latest.get("showCnt")
 )
 
-latest_open_date = selected_latest.get(
+release_date = latest.get(
     "openDt",
     "",
 )
 
 
-# =========================================================
-# 16. 영화 기본 정보
-# =========================================================
+# ============================================================
+# 20. 영화 정보
+# ============================================================
 
 st.divider()
 
@@ -731,38 +835,38 @@ st.header(
     f"🎬 {selected_movie}"
 )
 
-if latest_open_date:
+if release_date:
 
     st.caption(
-        f"개봉일: {latest_open_date}"
+        f"개봉일: {release_date}"
     )
 
 
-# =========================================================
-# 17. 현재 주요 지표
-# =========================================================
+# ============================================================
+# 21. 현재 지표
+# ============================================================
 
 col1, col2, col3 = st.columns(3)
 
 with col1:
 
     st.metric(
-        "어제 박스오피스 순위",
-        f"{latest_rank}위",
+        "🏆 어제 순위",
+        f"{current_rank}위",
     )
 
 with col2:
 
     st.metric(
-        "어제 관객수",
-        f"{format_number(latest_audience)}명",
+        "👥 어제 관객수",
+        f"{comma(current_audience)}명",
     )
 
 with col3:
 
     st.metric(
-        "누적 관객수",
-        f"{format_number(latest_acc)}명",
+        "🎟️ 누적 관객",
+        f"{comma(current_acc)}명",
     )
 
 
@@ -771,490 +875,367 @@ col4, col5 = st.columns(2)
 with col4:
 
     st.metric(
-        "스크린수",
-        f"{format_number(latest_screen)}개",
+        "🎞️ 스크린수",
+        f"{comma(current_screens)}개",
     )
 
 with col5:
 
     st.metric(
-        "상영횟수",
-        f"{format_number(latest_show)}회",
+        "📽️ 상영횟수",
+        f"{comma(current_shows)}회",
     )
 
 
-# =========================================================
-# 18. 최근 데이터 가져오기
-# =========================================================
+# ============================================================
+# 22. 최근 14일 데이터 조회
+# ============================================================
 
 st.divider()
 
 st.subheader(
-    "🔍 흥행 기록 조사 중..."
+    "🗂️ 최근 14일 사건 기록"
 )
 
 with st.spinner(
-    "최근 14일의 KOBIS 데이터를 확인하고 있습니다..."
+    "과거 기록을 뒤지는 중..."
 ):
 
-    history, history_errors = (
-        get_movie_history(
-            selected_movie,
-            yesterday,
-            days=14,
-        )
+    history, failed_dates = get_movie_history(
+        selected_movie,
+        yesterday.isoformat(),
+        days=14,
     )
 
 
-# 데이터가 아예 없는 경우
 if not history:
 
     st.warning(
-        "선택한 영화의 최근 기록을 찾지 못했습니다."
+        "최근 기록을 찾지 못했습니다."
     )
 
     st.info(
-        "다음 사항을 확인해 주세요.\n\n"
-        "• 해당 영화가 최근 박스오피스 순위에 있었는지\n"
-        "• 영화명이 KOBIS에서 정확하게 조회되는지\n"
-        "• 최근 날짜의 KOBIS 데이터가 정상적으로 제공되는지"
+        """
+다음 사항을 확인해 주세요.
+
+- 이 영화가 최근 박스오피스에 포함되어 있었는지
+- 영화가 개봉한 지 얼마 되지 않았는지
+- KOBIS에서 해당 날짜의 데이터가 제공되는지
+        """
     )
 
     st.stop()
 
 
-# 일부 날짜에 오류가 있었으면 안내
-if history_errors:
+if failed_dates:
 
     st.warning(
-        f"최근 조회 중 {len(history_errors)}개 날짜의 "
-        "데이터를 가져오지 못했습니다."
+        f"최근 14일 중 {len(failed_dates)}일의 "
+        "데이터 요청에 문제가 있었습니다."
     )
 
     st.caption(
-        "데이터가 정상적으로 확인된 날짜만 "
-        "그래프에 표시합니다."
+        "정상적으로 받아온 데이터만 분석합니다."
     )
 
 
-# =========================================================
-# 19. History DataFrame
-# =========================================================
-
-history_df = pd.DataFrame(
-    history
-)
-
-history_df = history_df.sort_values(
-    "date"
-).reset_index(drop=True)
-
-
-# 날짜를 문자열로 변경
-history_df["date_label"] = (
-    history_df["date"]
-    .apply(
-        lambda value: value.strftime(
-            "%m/%d"
-        )
-    )
-)
-
-
-# =========================================================
-# 20. 탐정 리포트
-# =========================================================
+# ============================================================
+# 23. 탐정의 현장 브리핑
+# ============================================================
 
 st.subheader(
-    "🕵️ 흥행 탐정 리포트"
+    "🕵️ 탐정의 현장 브리핑"
 )
 
-report = make_detective_report(
-    history
+st.success(
+    detective_summary(history)
 )
 
-st.info(report)
 
+# ============================================================
+# 24. 관객수 그래프
+# ============================================================
 
-# =========================================================
-# 21. 최근 기록 요약
-# =========================================================
+st.divider()
 
 st.subheader(
-    "📋 최근 기록"
+    "👥 관객들은 어떻게 움직였을까?"
 )
 
-first_record = history[0]
-last_record = history[-1]
-
-period_start = first_record["date"]
-period_end = last_record["date"]
-
-st.caption(
-    f"{format_date_korean(period_start)} ~ "
-    f"{format_date_korean(period_end)}"
-)
-
-
-# =========================================================
-# 22. 최근 관객수 변화
-# =========================================================
-
-st.subheader(
-    "👥 일일 관객수 추이"
-)
-
-audience_chart = history_df[
-    [
-        "date_label",
-        "audiCnt",
-    ]
-].copy()
-
-audience_chart = audience_chart.set_index(
-    "date_label"
-)
-
-audience_chart.columns = [
-    "일일 관객수"
-]
-
-st.line_chart(
-    audience_chart,
-    y="일일 관객수",
-    y_label="관객수",
-)
-
-
-# =========================================================
-# 23. 누적 관객수
-# =========================================================
-
-st.subheader(
-    "📈 누적 관객수 추이"
-)
-
-acc_chart = history_df[
-    [
-        "date_label",
-        "audiAcc",
-    ]
-].copy()
-
-acc_chart = acc_chart.set_index(
-    "date_label"
-)
-
-acc_chart.columns = [
-    "누적 관객수"
-]
-
-st.line_chart(
-    acc_chart,
-    y="누적 관객수",
-    y_label="누적 관객수",
-)
-
-
-# =========================================================
-# 24. 순위 변화
-# =========================================================
-
-st.subheader(
-    "🏆 박스오피스 순위 변화"
-)
-
-rank_chart = history_df[
-    [
-        "date_label",
-        "rank",
-    ]
-].copy()
-
-rank_chart = rank_chart.set_index(
-    "date_label"
-)
-
-rank_chart.columns = [
-    "순위"
-]
-
-# 순위는 숫자가 작을수록 높은 순위이므로
-# 그래프에서 1위가 위쪽에 오도록 뒤집습니다.
-rank_chart["순위 표시"] = (
-    rank_chart["순위"] * -1
-)
-
-st.line_chart(
-    rank_chart[
-        ["순위 표시"]
+audience_df = pd.DataFrame(
+    {
+        "일일 관객수": [
+            item["관객수"]
+            for item in history
+        ]
+    },
+    index=[
+        item["날짜"].strftime("%m/%d")
+        for item in history
     ],
-    y="순위 표시",
-    y_label="순위",
+)
+
+st.line_chart(
+    audience_df
+)
+
+st.info(
+    audience_story(history)
 )
 
 
-# =========================================================
-# 25. 스크린수와 상영횟수
-# =========================================================
+# ============================================================
+# 25. 순위 그래프
+# ============================================================
 
-col1, col2 = st.columns(2)
+st.subheader(
+    "🏆 박스오피스에서 올라갔을까, 내려갔을까?"
+)
 
-
-with col1:
-
-    st.subheader(
-        "🎞️ 스크린수 변화"
-    )
-
-    screen_chart = history_df[
-        [
-            "date_label",
-            "scrnCnt",
+rank_df = pd.DataFrame(
+    {
+        "순위": [
+            item["순위"]
+            for item in history
         ]
-    ].copy()
+    },
+    index=[
+        item["날짜"].strftime("%m/%d")
+        for item in history
+    ],
+)
 
-    screen_chart = screen_chart.set_index(
-        "date_label"
-    )
+# 1위가 그래프에서 위쪽에 오도록 음수로 표시합니다.
+rank_df["순위"] = (
+    rank_df["순위"] * -1
+)
 
-    screen_chart.columns = [
-        "스크린수"
-    ]
+st.line_chart(
+    rank_df
+)
 
-    st.line_chart(
-        screen_chart,
-        y="스크린수",
-        y_label="스크린수",
-    )
+st.info(
+    rank_story(history)
+)
 
 
-with col2:
+# ============================================================
+# 26. 스크린수 그래프
+# ============================================================
 
-    st.subheader(
-        "📽️ 상영횟수 변화"
-    )
+st.subheader(
+    "🎞️ 극장에서는 이 영화를 얼마나 배정했을까?"
+)
 
-    show_chart = history_df[
-        [
-            "date_label",
-            "showCnt",
+screen_df = pd.DataFrame(
+    {
+        "스크린수": [
+            item["스크린수"]
+            for item in history
         ]
-    ].copy()
+    },
+    index=[
+        item["날짜"].strftime("%m/%d")
+        for item in history
+    ],
+)
 
-    show_chart = show_chart.set_index(
-        "date_label"
+st.line_chart(
+    screen_df
+)
+
+st.info(
+    screen_story(history)
+)
+
+
+# ============================================================
+# 27. 상영횟수 그래프
+# ============================================================
+
+st.subheader(
+    "📽️ 하루에 몇 번이나 상영됐을까?"
+)
+
+show_df = pd.DataFrame(
+    {
+        "상영횟수": [
+            item["상영횟수"]
+            for item in history
+        ]
+    },
+    index=[
+        item["날짜"].strftime("%m/%d")
+        for item in history
+    ],
+)
+
+st.bar_chart(
+    show_df
+)
+
+st.info(
+    show_story(history)
+)
+
+
+# ============================================================
+# 28. 누적 관객 그래프
+# ============================================================
+
+st.subheader(
+    "📈 관객은 얼마나 쌓였을까?"
+)
+
+acc_df = pd.DataFrame(
+    {
+        "누적 관객수": [
+            item["누적관객"]
+            for item in history
+        ]
+    },
+    index=[
+        item["날짜"].strftime("%m/%d")
+        for item in history
+    ],
+)
+
+st.line_chart(
+    acc_df
+)
+
+first_acc = history[0]["누적관객"]
+last_acc = history[-1]["누적관객"]
+
+st.info(
+    f"🎟️ 최근 기록에서 누적 관객은 "
+    f"**{comma(last_acc - first_acc)}명** 증가했습니다."
+)
+
+
+# ============================================================
+# 29. 스크린당 관객 그래프
+# ============================================================
+
+st.subheader(
+    "🎯 스크린 하나당 관객은 얼마나 모였을까?"
+)
+
+efficiency_values = []
+
+for item in history:
+
+    screens = item["스크린수"]
+
+    if screens > 0:
+
+        value = (
+            item["관객수"]
+            / screens
+        )
+
+    else:
+
+        value = 0
+
+    efficiency_values.append(
+        value
     )
 
-    show_chart.columns = [
-        "상영횟수"
-    ]
 
-    st.line_chart(
-        show_chart,
-        y="상영횟수",
-        y_label="상영횟수",
-    )
+efficiency_df = pd.DataFrame(
+    {
+        "스크린당 관객수": efficiency_values
+    },
+    index=[
+        item["날짜"].strftime("%m/%d")
+        for item in history
+    ],
+)
+
+st.line_chart(
+    efficiency_df
+)
+
+st.info(
+    efficiency_story(history)
+)
 
 
-# =========================================================
-# 26. 시작일과 마지막 날 비교
-# =========================================================
+# ============================================================
+# 30. 상세 데이터
+# ============================================================
 
 st.divider()
 
 st.subheader(
-    "⚖️ 기간 시작과 현재 비교"
+    "📋 사건 기록 원본"
 )
 
-
-compare1, compare2, compare3 = st.columns(3)
-
-
-# ---------------------------------------------------------
-# 관객수 비교
-# ---------------------------------------------------------
-
-audience_change = calculate_change(
-    history,
-    "audiCnt",
-)
-
-with compare1:
-
-    st.write(
-        "**일일 관객수**"
-    )
-
-    if audience_change:
-
-        first_value = audience_change[0]
-        last_value = audience_change[1]
-
-        st.metric(
-            "현재",
-            f"{format_number(last_value)}명",
-            delta=f"{format_number(last_value - first_value)}명",
-        )
-
-    else:
-
-        st.write(
-            "비교 데이터 부족"
-        )
-
-
-# ---------------------------------------------------------
-# 스크린수 비교
-# ---------------------------------------------------------
-
-screen_change = calculate_change(
-    history,
-    "scrnCnt",
-)
-
-with compare2:
-
-    st.write(
-        "**스크린수**"
-    )
-
-    if screen_change:
-
-        first_value = screen_change[0]
-        last_value = screen_change[1]
-
-        st.metric(
-            "현재",
-            f"{format_number(last_value)}개",
-            delta=f"{format_number(last_value - first_value)}개",
-        )
-
-    else:
-
-        st.write(
-            "비교 데이터 부족"
-        )
-
-
-# ---------------------------------------------------------
-# 순위 비교
-# ---------------------------------------------------------
-
-rank_change = calculate_rank_change(
+table = pd.DataFrame(
     history
 )
 
-with compare3:
-
-    st.write(
-        "**박스오피스 순위**"
+table["날짜"] = table["날짜"].apply(
+    lambda x: x.strftime(
+        "%Y-%m-%d"
     )
-
-    if rank_change:
-
-        first_rank = rank_change[0]
-        last_rank = rank_change[1]
-
-        improvement = rank_change[2]
-
-        if improvement > 0:
-
-            delta_text = (
-                f"{improvement}계단 상승"
-            )
-
-        elif improvement < 0:
-
-            delta_text = (
-                f"{abs(improvement)}계단 하락"
-            )
-
-        else:
-
-            delta_text = "변화 없음"
-
-        st.metric(
-            "현재",
-            f"{last_rank}위",
-            delta=delta_text,
-        )
-
-    else:
-
-        st.write(
-            "비교 데이터 부족"
-        )
-
-
-# =========================================================
-# 27. 상세 데이터 표
-# =========================================================
-
-st.divider()
-
-st.subheader(
-    "📊 상세 흥행 기록"
 )
 
-display_df = history_df[
+table = table[
     [
-        "date",
-        "rank",
-        "audiCnt",
-        "audiAcc",
-        "scrnCnt",
-        "showCnt",
+        "날짜",
+        "순위",
+        "관객수",
+        "누적관객",
+        "스크린수",
+        "상영횟수",
     ]
 ].copy()
 
 
-display_df["date"] = (
-    display_df["date"]
-    .apply(
-        lambda value: value.strftime(
-            "%Y-%m-%d"
-        )
-    )
-)
-
-
-display_df.columns = [
-    "날짜",
-    "순위",
-    "일일 관객수",
-    "누적 관객수",
-    "스크린수",
-    "상영횟수",
-]
-
-
-# 숫자에 천 단위 쉼표를 적용합니다.
 for column in [
-    "일일 관객수",
-    "누적 관객수",
+    "관객수",
+    "누적관객",
     "스크린수",
     "상영횟수",
 ]:
 
-    display_df[column] = (
-        display_df[column]
-        .apply(
-            lambda value: f"{int(value):,}"
-        )
+    table[column] = table[column].apply(
+        lambda x: f"{x:,}"
     )
 
 
 st.dataframe(
-    display_df,
+    table,
     use_container_width=True,
     hide_index=True,
 )
 
 
-# =========================================================
-# 28. 데이터 출처
-# =========================================================
+# ============================================================
+# 31. 최종 탐정 보고서
+# ============================================================
+
+st.divider()
+
+st.subheader(
+    "🔎 탐정의 최종 보고서"
+)
+
+st.success(
+    detective_summary(history)
+)
+
+st.caption(
+    "※ 위 내용은 KOBIS에서 확인된 실제 과거 데이터를 "
+    "요약한 것입니다. 미래 흥행 결과를 예측하지 않습니다."
+)
+
+
+# ============================================================
+# 32. 데이터 출처
+# ============================================================
 
 st.divider()
 
@@ -1263,10 +1244,5 @@ st.caption(
 )
 
 st.caption(
-    "※ 이 앱은 KOBIS에서 제공하는 실제 과거 데이터를 "
-    "시각화하고 비교합니다."
-)
-
-st.caption(
-    "※ 그래프와 리포트는 미래 흥행 결과를 예측하지 않습니다."
+    f"데이터 기준일: {pretty_date(yesterday)}"
 )
