@@ -1,4 +1,3 @@
-# moviee
 import json
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
@@ -373,5 +372,7 @@ st.dataframe(
 
 st.caption(
     f"※ 조회 기준일: {yesterday} (한국 시간) · "
+    "출처: 영화관입장권통합전산망(KOBIS)"
+)
     "출처: 영화관입장권통합전산망(KOBIS)"
 )
